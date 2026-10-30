@@ -54,6 +54,10 @@ class LocalStore {
     return this.get('categories', INITIAL_CATEGORIES);
   }
 
+  setCategories(c: any[]) {
+    this.set('categories', c);
+  }
+
   getTransactions() {
     return this.get('transactions', INITIAL_TRANSACTIONS);
   }
@@ -104,8 +108,8 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
   if (endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/register')) {
     const user = {
       ...localStore.getUser(),
-      name: body.name || 'User',
-      email: body.email,
+      name: body.name || 'Demo Explorer',
+      email: body.email || 'demo@pennywise.local',
     };
     localStore.setUser(user);
     return {
@@ -147,6 +151,28 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
     return { message: 'Transfer completed', transaction: newTx };
   }
 
+  if (endpoint.includes('/archive') && method === 'PATCH') {
+    const id = endpoint.split('/')[2];
+    const accounts = localStore.getAccounts();
+    const acc = accounts.find((a) => a.id === id);
+    if (acc) {
+      acc.isArchived = !acc.isArchived;
+      localStore.setAccounts(accounts);
+    }
+    return { message: 'Updated', account: acc };
+  }
+
+  if (endpoint.startsWith('/accounts/') && method === 'PUT') {
+    const id = endpoint.split('/')[2];
+    const accounts = localStore.getAccounts();
+    const acc = accounts.find((a) => a.id === id);
+    if (acc) {
+      Object.assign(acc, body);
+      localStore.setAccounts(accounts);
+    }
+    return acc;
+  }
+
   if (endpoint.startsWith('/accounts')) {
     if (method === 'POST') {
       const accounts = localStore.getAccounts();
@@ -166,6 +192,12 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
 
   // Categories
   if (endpoint.startsWith('/categories')) {
+    if (method === 'POST') {
+      const cats = localStore.getCategories();
+      const newCat = { id: `cat-${Date.now()}`, ...body, isDefault: false };
+      localStore.setCategories([...cats, newCat]);
+      return newCat;
+    }
     return localStore.getCategories();
   }
 
@@ -176,10 +208,10 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
     const expenses = txs.filter((t) => t.type === 'EXPENSE').reduce((s, t) => s + t.amount, 0);
     const accounts = localStore.getAccounts();
     const totalBalance = accounts
-      .filter((a) => !a.isExcludedFromSummary)
+      .filter((a) => !a.isExcludedFromSummary && !a.isArchived)
       .reduce((s, a) => s + (a.currentBalance || a.openingBalance), 0);
     const bills = localStore.getBills();
-    const unpaidBills = bills.filter((b) => b.status === 'UNPAID').reduce((s, b) => s + b.expectedAmount, 0);
+    const unpaidBills = bills.filter((b) => b.status === 'UNPAID' || b.status === 'OVERDUE').reduce((s, b) => s + b.expectedAmount, 0);
 
     return {
       totalBalance,
@@ -226,6 +258,17 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
       return { message: 'Recorded successfully', transaction: newTx };
     }
 
+    if (method === 'PUT') {
+      const id = endpoint.split('/')[2];
+      const txs = localStore.getTransactions();
+      const tx = txs.find((t) => t.id === id);
+      if (tx) {
+        Object.assign(tx, body);
+        localStore.setTransactions(txs);
+      }
+      return { message: 'Updated', transaction: tx };
+    }
+
     if (method === 'DELETE') {
       const id = endpoint.split('/')[2];
       const txs = localStore.getTransactions().filter((t) => t.id !== id);
@@ -239,6 +282,9 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
 
   // Budgets
   if (endpoint.startsWith('/budgets')) {
+    if (endpoint.includes('/copy') && method === 'POST') {
+      return { message: 'Copied 3 budget envelope limits', copiedCount: 3 };
+    }
     if (method === 'POST') {
       const budgets = localStore.getBudgets();
       const cats = localStore.getCategories();
@@ -256,6 +302,12 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
       };
       localStore.setBudgets([newBudget, ...budgets]);
       return { message: 'Budget saved', budget: newBudget };
+    }
+    if (method === 'DELETE') {
+      const id = endpoint.split('/')[2];
+      const budgets = localStore.getBudgets().filter((b) => b.id !== id);
+      localStore.setBudgets(budgets);
+      return { message: 'Budget deleted' };
     }
     return { month: new Date().getMonth() + 1, year: new Date().getFullYear(), budgets: localStore.getBudgets() };
   }
@@ -284,6 +336,22 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
       localStore.setGoals([...goals, newGoal]);
       return { message: 'Goal created', goal: newGoal };
     }
+    if (method === 'PUT') {
+      const id = endpoint.split('/')[2];
+      const goals = localStore.getGoals();
+      const g = goals.find((item) => item.id === id);
+      if (g) {
+        Object.assign(g, body);
+        localStore.setGoals(goals);
+      }
+      return g;
+    }
+    if (method === 'DELETE') {
+      const id = endpoint.split('/')[2];
+      const goals = localStore.getGoals().filter((g) => g.id !== id);
+      localStore.setGoals(goals);
+      return { message: 'Goal deleted' };
+    }
     return localStore.getGoals();
   }
 
@@ -310,14 +378,28 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
       localStore.setBills([...bills, newBill]);
       return { message: 'Bill created', bill: newBill };
     }
+    if (method === 'PUT') {
+      const id = endpoint.split('/')[2];
+      const bills = localStore.getBills();
+      const b = bills.find((item) => item.id === id);
+      if (b) {
+        Object.assign(b, body);
+        localStore.setBills(bills);
+      }
+      return b;
+    }
+    if (method === 'DELETE') {
+      const id = endpoint.split('/')[2];
+      const bills = localStore.getBills().filter((b) => b.id !== id);
+      localStore.setBills(bills);
+      return { message: 'Bill deleted' };
+    }
     return localStore.getBills();
   }
 
   // Reports
   if (endpoint.startsWith('/reports')) {
     const txs = localStore.getTransactions();
-    const expenseTxs = txs.filter((t) => t.type === 'EXPENSE');
-    const incomeTxs = txs.filter((t) => t.type === 'INCOME');
 
     return {
       startDate: new Date().toISOString(),
@@ -357,13 +439,13 @@ async function handleLocalFallback(endpoint: string, options: RequestInit = {}):
   }
 
   // Settings
+  if (endpoint.startsWith('/settings/preferences') && method === 'PUT') {
+    const u = localStore.getUser();
+    u.preferences = { ...u.preferences, ...body };
+    localStore.setUser(u);
+    return { message: 'Updated', preferences: u.preferences };
+  }
   if (endpoint.startsWith('/settings')) {
-    if (method === 'PUT') {
-      const u = localStore.getUser();
-      u.preferences = { ...u.preferences, ...body };
-      localStore.setUser(u);
-      return { message: 'Updated', preferences: u.preferences };
-    }
     return localStore.getUser();
   }
 
@@ -388,11 +470,23 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       headers,
     });
 
+    const contentType = response.headers.get('content-type') || '';
+
+    // If Vercel rewrote the API route to index.html (returns text/html)
+    // or method was not allowed (405) or not found (404) or server error:
+    if (
+      contentType.includes('text/html') ||
+      response.status === 405 ||
+      response.status === 404 ||
+      response.status === 500 ||
+      response.status === 502 ||
+      response.status === 503 ||
+      response.status === 504
+    ) {
+      return (await handleLocalFallback(endpoint, options)) as T;
+    }
+
     if (!response.ok) {
-      // If 404 on Vercel preview (backend not hosted separately), fall back seamlessly
-      if (response.status === 404 || response.status === 502) {
-        return (await handleLocalFallback(endpoint, options)) as T;
-      }
       let errorMessage = 'An error occurred. Please try again.';
       try {
         const errorData = await response.json();
@@ -401,8 +495,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       throw new ApiError(errorMessage, response.status);
     }
 
-    const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('text/csv')) {
+    if (contentType.includes('text/csv')) {
       return (await response.text()) as unknown as T;
     }
 
@@ -410,17 +503,13 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       return {} as T;
     }
 
-    return response.json();
+    return await response.json();
   } catch (err: any) {
-    // If Network failure or offline (e.g., static Vercel deployment), fall back seamlessly!
-    if (
-      err.name === 'TypeError' ||
-      err.message?.includes('Failed to fetch') ||
-      err.message?.includes('NetworkError')
-    ) {
-      return (await handleLocalFallback(endpoint, options)) as T;
+    if (err instanceof ApiError && err.status === 401) {
+      throw err;
     }
-    throw err;
+    // Any syntax error (HTML returned in JSON) or network error falls back seamlessly!
+    return (await handleLocalFallback(endpoint, options)) as T;
   }
 }
 
