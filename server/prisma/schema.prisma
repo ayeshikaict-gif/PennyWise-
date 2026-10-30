@@ -1,0 +1,206 @@
+// PennyWise Database Schema
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String           @id @default(uuid())
+  name         String
+  email        String           @unique
+  passwordHash String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  preferences  UserPreferences?
+  accounts     Account[]
+  categories   Category[]
+  transactions Transaction[]
+  budgets      Budget[]
+  savingsGoals SavingsGoal[]
+  bills        Bill[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model UserPreferences {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency            String   @default("LKR")
+  dateFormat          String   @default("YYYY-MM-DD")
+  firstDayOfWeek      Int      @default(1) // 1 = Monday, 0 = Sunday
+  largeTextMode       Boolean  @default(false)
+  simplifiedMode      Boolean  @default(false)
+  theme               String   @default("light") // "light" | "dark"
+  budgetNotifications Boolean  @default(true)
+  billReminders       Boolean  @default(true)
+  defaultAccountId    String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+model Account {
+  id                    String        @id @default(uuid())
+  userId                String
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                  String
+  type                  String        @default("SAVINGS") // CASH, SAVINGS, CURRENT, DIGITAL_WALLET, OTHER
+  currency              String        @default("LKR")
+  openingBalance        Float         @default(0.0)
+  isExcludedFromSummary Boolean       @default(false)
+  isArchived            Boolean       @default(false)
+  description           String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  transactionsFrom      Transaction[] @relation("FromAccount")
+  transactionsTo        Transaction[] @relation("ToAccount")
+  savingsGoals          SavingsGoal[]
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Category {
+  id        String        @id @default(uuid())
+  userId    String?       // null = default system category
+  user      User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  type      String        // INCOME, EXPENSE
+  icon      String        @default("tag")
+  color     String        @default("#10B981")
+  isDefault Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  transactions Transaction[]
+  budgets      Budget[]
+  bills        Bill[]
+
+  @@index([userId, type])
+  @@map("categories")
+}
+
+model Transaction {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         Account   @relation("FromAccount", fields: [accountId], references: [id], onDelete: Cascade)
+  type            String    // INCOME, EXPENSE, TRANSFER
+  amount          Float
+  categoryId      String?
+  category        Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  date            DateTime  @default(now())
+  description     String?
+  paymentMethod   String?   @default("CASH") // CASH, BANK_CARD, ONLINE_TRANSFER, DIGITAL_WALLET, OTHER
+  toAccountId     String?
+  toAccount       Account?  @relation("ToAccount", fields: [toAccountId], references: [id], onDelete: SetNull)
+  notes           String?
+  tags            String?   // comma-separated tags
+  isRecurring     Boolean   @default(false)
+  recurringPeriod String?   // DAILY, WEEKLY, MONTHLY, YEARLY
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  goalContributions GoalContribution[]
+
+  @@index([userId, date])
+  @@index([accountId])
+  @@index([categoryId])
+  @@map("transactions")
+}
+
+model Budget {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId     String?   // null = overall monthly spending limit
+  category       Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  amount         Float
+  month          Int       // 1 - 12
+  year           Int       // e.g. 2026
+  alertThreshold Float     @default(0.8) // alert at 80%
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([userId, categoryId, month, year])
+  @@index([userId, month, year])
+  @@map("budgets")
+}
+
+model SavingsGoal {
+  id            String             @id @default(uuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId     String?            // Optional linked account
+  account       Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  name          String
+  targetAmount  Float
+  currentAmount Float              @default(0.0)
+  targetDate    DateTime?
+  description   String?
+  isCompleted   Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  contributions GoalContribution[]
+
+  @@index([userId])
+  @@map("savings_goals")
+}
+
+model GoalContribution {
+  id            String       @id @default(uuid())
+  goalId        String
+  goal          SavingsGoal  @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  amount        Float
+  date          DateTime     @default(now())
+  note          String?
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+
+  @@index([goalId])
+  @@map("goal_contributions")
+}
+
+model Bill {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  expectedAmount Float
+  dueDate        DateTime
+  frequency      String    @default("MONTHLY") // ONCE, WEEKLY, MONTHLY, QUARTERLY, YEARLY
+  categoryId     String?
+  category       Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  status         String    @default("UNPAID") // UNPAID, PAID, OVERDUE
+  lastPaidDate   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId, dueDate])
+  @@map("bills")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("SYSTEM") // BILL_DUE, BUDGET_WARNING, GOAL_MILESTONE, SYSTEM
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
